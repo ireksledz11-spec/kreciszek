@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wirtualny Sklep 360° & 2D</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background: #0b0f19; color: #fff; }
+
+        #webgl-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+
+        #shelf-2d-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
+            display: none; justify-content: center; align-items: center; background: #0b0f19;
+        }
+        #shelf-2d-image { max-width: 100%; max-height: 100%; object-fit: contain; display: block; margin: auto; }
+        #hotspots-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+        }
+
+        .hotspot {
+            position: absolute; width: 44px; height: 44px; background: #2563eb;
+            border: 3px solid #fff; border-radius: 50%; cursor: pointer;
+            transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center;
+            font-size: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); pointer-events: auto;
+            user-select: none; -webkit-user-select: none;
+        }
+        .hotspot:hover { background: #1d4ed8; transform: translate(-50%, -50%) scale(1.15); }
+        #top-bar {
+            position: fixed; top: 15px; left: 15px; right: 15px; z-index: 100;
+            display: flex; justify-content: space-between; align-items: center; pointer-events: auto;
+        }
+        .panel-group { display: flex; gap: 8px; }
+        .btn {
+            background: #1e293b; color: #fff; border: 1px solid #475569;
+            padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .btn:hover { background: #2563eb; }
+        .btn-accent { background: #10b981; }
+        .btn-accent:hover { background: #059669; }
+        .btn-danger { background: #ef4444; }
+        .btn-warning { background: #f59e0b; color: #000; font-weight: bold; }
+        #admin-panel-container {
+            position: fixed; top: 75px; right: 15px; background: #1e293b;
+            border: 2px solid #38bdf8; padding: 20px; border-radius: 12px; z-index: 150;
+            display: none; width: 300px; box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+        }
+        #admin-panel-container h4 { font-size: 15px; margin-bottom: 12px; color: #38bdf8; display: flex; justify-content: space-between; align-items: center; }
+        #password-overlay, #modal-overlay, #checkout-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85);
+            z-index: 1000; display: none; justify-content: center; align-items: center;
+        }
+        .modal-box {
+            background: #1e293b; width: 90%; max-width: 400px; border-radius: 16px; padding: 30px;
+            border: 1px solid #475569; text-align: center; box-shadow: 0 20px 25px rgba(0,0,0,0.5);
+        }
+        #fpp-hands-overlay {
+            position: fixed; bottom: 0; left: 0; width: 100%; height: 110px; z-index: 100;
+            pointer-events: none; display: flex; justify-content: center; align-items: flex-end;
+        }
+        .cart-graphic {
+            width: 300px; height: 90px; background: rgba(15,23,42,0.95);
+            border-top: 4px solid #3b82f6; border-radius: 20px 20px 0 0; display: flex;
+            flex-direction: column; align-items: center; justify-content: center; pointer-events: auto;
+            cursor: pointer; box-shadow: 0 -5px 15px rgba(0,0,0,0.5);
+        }
+
+        #edit-banner {
+            position: fixed; top: 75px; left: 50%; transform: translateX(-50%);
+            background: #e11d48; color: white; padding: 8px 16px; border-radius: 8px;
+            font-size: 14px; font-weight: bold; z-index: 100; display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="edit-banner">🛠️ TRYB EDYCJI: Kliknij w miejsce na ekranie, aby przypisać produkt!</div>
+    <div id="top-bar">
+        <div class="panel-group">
+            <button class="btn" onclick="switchAleppo(0)">Alejka 1: Warzywa</button>
+            <button class="btn" onclick="switchAleppo(1)">Alejka 2: Nabiał</button>
+        </div>
+        <div class="panel-group">
+            <button class="btn btn-warning" onclick="openPasswordModal()">⚙️ Panel Admina</button>
+        </div>
+    </div>
+    <div id="admin-panel-container">
+        <h4>Panel Administratora <span style="cursor:pointer; color:#ef4444; font-size:18px;" onclick="closeAdminPanel()">✕</span></h4>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+            <input type="file" id="file-input" accept="image/*" style="display:none" onchange="loadCustomPanorama(event)">
+            <input type="file" id="shelf-2d-input" accept="image/*" style="display:none" onchange="loadCustomShelf2D(event)">
+            <input type="file" id="csv-input" accept=".csv" style="display:none" onchange="handleCSVUpload(event)">
+            <button class="btn" onclick="document.getElementById('file-input').click()">📁 Wgraj Panorama 360°</button>
+            <button class="btn btn-warning" onclick="document.getElementById('shelf-2d-input').click()">🖼️ Wgraj Półkę 2D</button>
+            <button class="btn btn-accent" onclick="document.getElementById('csv-input').click()">🔄 Aktualizuj CSV (EAN)</button>
+            <button class="btn btn-danger" onclick="toggleEditor()">🛠️ Tryb Edycji Hotspotów</button>
+            <button class="btn" style="background:#64748b;" onclick="clearSavedState()">🗑️ Wyczyść zapisany stan</button>
+        </div>
+        <div id="editor-controls" style="margin-top: 12px; border-top: 1px solid #475569; padding-top: 10px; display: none;">
+            <p style="font-size: 12px; color: #94a3b8; margin-bottom: 5px;">Wybierz produkt z bazy:</p>
+            <select id="editor-product-select" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0f172a; color: #fff; border: 1px solid #475569; border-radius: 6px;"></select>
+            <button class="btn btn-accent" style="width:100%; margin-bottom: 6px; font-size: 13px;" onclick="armEditorPlacement()">📍 Umieść na kliknięcie</button>
+            <button class="btn btn-danger" style="width:100%; font-size: 13px;" onclick="removeLastHotspot()">🗑️ Usuń ostatni punkt</button>
+        </div>
+    </div>
+    <div id="password-overlay">
+        <div class="modal-box">
+            <h2 style="margin-bottom: 15px; color: #38bdf8;">Autoryzacja Admina</h2>
+            <p style="color: #94a3b8; font-size: 14px; margin-bottom: 15px;">Wpisz hasło: <b>admin123</b></p>
+            <input type="password" id="admin-pass-input" placeholder="Hasło..." style="width: 100%; padding: 12px; margin-bottom: 15px; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; text-align: center; font-size: 16px;">
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-accent" style="flex:1;" onclick="verifyPassword()">Zaloguj</button>
+                <button class="btn btn-danger" style="flex:1;" onclick="closePasswordModal()">Anuluj</button>
+            </div>
+        </div>
+    </div>
+    <div id="webgl-container"></div>
+    <div id="shelf-2d-container" onclick="handleShelf2DClick(event)">
+        <img id="shelf-2d-image" src="" alt="Półka 2D">
+    </div>
+    <div id="hotspots-layer"></div>
+    <div id="fpp-hands-overlay">
+        <div class="cart-graphic" onclick="openCheckout()">
+            <div style="font-size: 11px; color: #93c5fd; text-transform: uppercase; font-weight: bold;">🛒 Twój Koszyk</div>
+            <div style="font-size: 16px; font-weight: bold; margin-top: 2px;"><span id="cart-count">0</span> szt. | <span id="cart-total">0.00</span> PLN</div>
+        </div>
+    </div>
+    <div id="modal-overlay">
+        <div class="modal-box">
+            <h2 id="modal-prod-name" style="margin-bottom: 5px;">Nazwa</h2>
+            <p id="modal-prod-ean" style="color: #38bdf8; font-size: 13px; margin-bottom: 15px;">EAN</p>
+            <div id="modal-prod-price" style="font-size: 26px; color: #34d399; font-weight: bold; margin-bottom: 20px;">0.00 PLN</div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-accent" style="flex:1;" onclick="addProductToCart()">Do koszyka</button>
+                <button class="btn btn-danger" style="flex:1;" onclick="closeProductModal()">Zamknij</button>
+            </div>
+        </div>
+    </div>
+    <div id="checkout-overlay">
+        <div class="modal-box">
+            <h2 style="margin-bottom: 10px;">Koszyk Zakupowy</h2>
+            <div id="checkout-items-list" style="max-height: 200px; overflow-y: auto; text-align: left; margin-bottom: 15px;"></div>
+            <div style="font-size: 18px; font-weight: bold; text-align: right; margin-bottom: 15px; color: #34d399;">
+                Razem: <span id="checkout-grand-total">0.00</span> PLN
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-accent" style="flex:1;" onclick="alert('Zamówienie złożone!')">Kupuję</button>
+                <button class="btn btn-danger" style="flex:1;" onclick="closeCheckout()">Wróć</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        let productsDB = {};
+        let initialCSV = "ean,nazwa,cena\n" +
+                         "5900000001001,Pomidor Malinowy 1kg,12.50\n" +
+                         "5900000001005,Ogórek Szklarniowy,7.99\n" +
+                         "5900000002020,Mleko Łowickie 2% 1L,3.80";
+
+        function parseCSVData(csvText) {
+            Papa.parse(csvText, {
+                header: false,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    productsDB = {};
+                    results.data.forEach((row, index) => {
+                        if(index === 0 && row[0] && row[0].toString().toLowerCase().includes('ean')) return;
+                        if(row.length >= 3) {
+                            let ean = row[0] ? row[0].toString().trim() : "";
+                            let nazwa = row[1] ? row[1].toString().trim() : "Towar";
+                            let cena = parseFloat(row[2].toString().trim().replace(',', '.')) || 0;
+                            if(ean) productsDB[ean] = { ean, nazwa, cena: cena.toFixed(2) };
+                        }
+                    });
+                    populateEditorSelect();
+                }
+            });
+        }
+        parseCSVData(initialCSV);
+
+        function populateEditorSelect() {
+            const select = document.getElementById('editor-product-select');
+            if(!select) return;
+            select.innerHTML = '';
+            Object.values(productsDB).forEach(p => {
+                let opt = document.createElement('option');
+                opt.value = p.ean;
+                opt.textContent = `[${p.ean}] ${p.nazwa} (${p.cena} zł)`;
+                select.appendChild(opt);
+            });
+        }
+
+        function openPasswordModal() {
+            document.getElementById('password-overlay').style.display = 'flex';
+            document.getElementById('admin-pass-input').focus();
+        }
+        function closePasswordModal() {
+            document.getElementById('password-overlay').style.display = 'none';
+            document.getElementById('admin-pass-input').value = '';
+        }
+        function verifyPassword() {
+            let val = document.getElementById('admin-pass-input').value;
+            if(val === "admin123") {
+                closePasswordModal();
+                document.getElementById('admin-panel-container').style.display = 'block';
+            } else {
+                alert("Nieprawidłowe hasło!");
+            }
+        }
+        function closeAdminPanel() {
+            document.getElementById('admin-panel-container').style.display = 'none';
+            if(isEditorActive) toggleEditor();
+        }
+
+        let cart = [];
+        let currentAleppo = 0;
+        let isEditorActive = false;
+        let readyToPlaceProduct = false;
+        let selectedProductForModal = null;
+        let is2DMode = false;
+        let lastHotspotUpdate = 0;
+
+        let alejki = [
+            {
+                name: "Alejka 1", type: "360", textureUrl: null,
+                colorTexture: generateCanvasTexture("#1b4332", "#2d6a4f", "ALEJKA 1: WARZYWA"),
+                hotspots: [{ ean: "5900000001001", pos: { x: -80, y: -10, z: -150 }, percentX: 30, percentY: 50 }]
+            },
+            {
+                name: "Alejka 2", type: "360", textureUrl: null,
+                colorTexture: generateCanvasTexture("#1e3a8a", "#1d4ed8", "ALEJKA 2: NABIAŁ"),
+                hotspots: [{ ean: "5900000002020", pos: { x: -60, y: -10, z: -160 }, percentX: 40, percentY: 50 }]
+            }
+        ];
+
+        function generateCanvasTexture(c1, c2, title) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2048; canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            let grad = ctx.createLinearGradient(0, 0, 0, 1024);
+            grad.addColorStop(0, c1); grad.addColorStop(0.5, c2); grad.addColorStop(1, '#0f172a');
+            ctx.fillStyle = grad; ctx.fillRect(0, 0, 2048, 1024);
+            ctx.fillStyle = "#ffffff"; ctx.font = "bold 60px sans-serif"; ctx.textAlign = "center";
+            ctx.fillText(title, 1024, 180);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ========== ZAPIS / ODCZYT STANU ==========
+        function saveState() {
+            try {
+                const toSave = alejki.map(a => ({
+                    name: a.name,
+                    type: a.type,
+                    textureUrl: a.textureUrl,
+                    hotspots: a.hotspots
+                }));
+                localStorage.setItem('wirtualny_sklep_state', JSON.stringify(toSave));
+                localStorage.setItem('wirtualny_sklep_cart', JSON.stringify(cart));
+                localStorage.setItem('wirtualny_sklep_current', currentAleppo);
+            } catch (e) {
+                console.warn('Nie udało się zapisać stanu (limit localStorage?):', e);
+                alert('Uwaga: nie udało się zapisać stanu (prawdopodobnie za duże zdjęcie).');
+            }
+        }
+
+        function loadState() {
+            try {
+                const saved = localStorage.getItem('wirtualny_sklep_state');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    parsed.forEach((savedAlejka, i) => {
+                        if (alejki[i]) {
+                            alejki[i].type = savedAlejka.type || "360";
+                            alejki[i].textureUrl = savedAlejka.textureUrl || null;
+                            alejki[i].hotspots = savedAlejka.hotspots || [];
+                        }
+                    });
+                }
+
+                const savedCart = localStorage.getItem('wirtualny_sklep_cart');
+                if (savedCart) {
+                    cart = JSON.parse(savedCart);
+                }
+
+                const savedCurrent = localStorage.getItem('wirtualny_sklep_current');
+                if (savedCurrent !== null) {
+                    currentAleppo = parseInt(savedCurrent) || 0;
+                }
+            } catch (e) {
+                console.warn('Błąd ładowania stanu:', e);
+            }
+        }
+
+        function clearSavedState() {
+            if (confirm('Na pewno wyczyścić zapisany stan (zdjęcia + hotspoty + koszyk)?')) {
+                localStorage.removeItem('wirtualny_sklep_state');
+                localStorage.removeItem('wirtualny_sklep_cart');
+                localStorage.removeItem('wirtualny_sklep_current');
+                location.reload();
+            }
+        }
+
+        // ========== THREE.JS ==========
+        const container = document.getElementById('webgl-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1100);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        const sphereGeo = new THREE.SphereGeometry(500, 60, 40);
+        sphereGeo.scale(-1, 1, 1);
+        const sphereMat = new THREE.MeshBasicMaterial({ map: alejki[0].colorTexture });
+        const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+        scene.add(sphereMesh);
+
+        let isUserInteracting = false, onPointerDownMouseX = 0, onPointerDownMouseY = 0;
+        let lon = 0, lat = 0, targetLon = 0, targetLat = 0;
+
+        container.addEventListener('pointerdown', (e) => {
+            if(is2DMode) return;
+            isUserInteracting = true;
+            onPointerDownMouseX = e.clientX;
+            onPointerDownMouseY = e.clientY;
+            targetLon = lon; targetLat = lat;
+        });
+        window.addEventListener('pointermove', (e) => {
+            if (!isUserInteracting || is2DMode) return;
+            targetLon = (onPointerDownMouseX - e.clientX) * 0.04 + lon;
+            targetLat = (e.clientY - onPointerDownMouseY) * 0.04 + lat;
+        });
+        window.addEventListener('pointerup', () => { isUserInteracting = false; });
+        window.addEventListener('keydown', (e) => {
+            if(is2DMode) return;
+            const step = 4;
+            if(e.key === "ArrowLeft") targetLon += step;
+            if(e.key === "ArrowRight") targetLon -= step;
+            if(e.key === "ArrowUp") targetLat = Math.max(-85, targetLat - step);
+            if(e.key === "ArrowDown") targetLat = Math.min(85, targetLat + step);
+        });
+
+        function loadCustomPanorama(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                new THREE.TextureLoader().load(e.target.result, function(tex) {
+                    sphereMat.map = tex; sphereMat.needsUpdate = true;
+                    alejki[currentAleppo].type = "360";
+                    alejki[currentAleppo].textureUrl = e.target.result;
+                    switchTo3DMode();
+                    saveState();
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function loadCustomShelf2D(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                alejki[currentAleppo].type = "2d";
+                alejki[currentAleppo].textureUrl = e.target.result;
+                switchTo2DMode(e.target.result);
+                saveState();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function switchTo2DMode(imgSrc) {
+            is2DMode = true;
+            document.getElementById('webgl-container').style.display = 'none';
+            let c2d = document.getElementById('shelf-2d-container');
+            let img = document.getElementById('shelf-2d-image');
+            img.src = imgSrc;
+            c2d.style.display = 'flex';
+            setTimeout(updateHotspotsDOM, 50);
+        }
+
+        function switchTo3DMode() {
+            is2DMode = false;
+            document.getElementById('shelf-2d-container').style.display = 'none';
+            document.getElementById('webgl-container').style.display = 'block';
+            updateHotspotsDOM();
+        }
+
+        function updateHotspotsDOM() {
+            let layer = document.getElementById('hotspots-layer');
+            if(!layer) return;
+            layer.innerHTML = '';
+            let current = alejki[currentAleppo];
+            if(!current || !current.hotspots) return;
+
+            if(current.type === "2d") {
+                let img = document.getElementById('shelf-2d-image');
+                if(!img || !img.complete) return;
+                let rect = img.getBoundingClientRect();
+                current.hotspots.forEach(h => {
+                    if(h.percentX !== undefined) {
+                        let div = createHotspotElement(
+                            rect.left + (rect.width * h.percentX / 100),
+                            rect.top + (rect.height * h.percentY / 100),
+                            h.ean
+                        );
+                        layer.appendChild(div);
+                    }
+                });
+            } else {
+                current.hotspots.forEach(h => {
+                    if(!h.pos) return;
+                    let v = new THREE.Vector3(h.pos.x, h.pos.y, h.pos.z).project(camera);
+                    if(v.z < 1) {
+                        let div = createHotspotElement(
+                            (v.x * .5 + .5) * window.innerWidth,
+                            (v.y * -.5 + .5) * window.innerHeight,
+                            h.ean
+                        );
+                        layer.appendChild(div);
+                    }
+                });
+            }
+        }
+
+        // ========== POPRAWIONY HOTSPOT ==========
+        function createHotspotElement(x, y, ean) {
+            let div = document.createElement('div');
+            div.className = 'hotspot';
+            div.style.left = `${x}px`;
+            div.style.top = `${y}px`;
+            div.innerHTML = "🛒";
+            div.dataset.ean = ean;
+
+            const handleTrigger = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                if (!isEditorActive) {
+                    openProductModal(ean);
+                }
+            };
+
+            // Zatrzymujemy wszystkie możliwe zdarzenia, które mogłyby kolidować
+            ['pointerdown', 'mousedown', 'touchstart', 'pointerup', 'mouseup', 'touchend', 'click'].forEach(evt => {
+                div.addEventListener(evt, (e) => {
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    if (evt === 'click' || evt === 'pointerup' || evt === 'touchend') {
+                        handleTrigger(e);
+                    }
+                }, { capture: true });
+            });
+
+            return div;
+        }
+
+        function switchAleppo(index) {
+            currentAleppo = index;
+            let a = alejki[currentAleppo];
+            if(a.type === "2d" && a.textureUrl) {
+                switchTo2DMode(a.textureUrl);
+            } else {
+                switchTo3DMode();
+                if(a.textureUrl) {
+                    new THREE.TextureLoader().load(a.textureUrl, (tex) => {
+                        sphereMat.map = tex; sphereMat.needsUpdate = true;
+                    });
+                } else {
+                    sphereMat.map = a.colorTexture;
+                    sphereMat.needsUpdate = true;
+                }
+            }
+            updateHotspotsDOM();
+            saveState();
+        }
+
+        function toggleEditor() {
+            isEditorActive = !isEditorActive;
+            document.getElementById('editor-controls').style.display = isEditorActive ? 'block' : 'none';
+            document.getElementById('edit-banner').style.display = isEditorActive ? 'block' : 'none';
+            readyToPlaceProduct = false;
+        }
+
+        function armEditorPlacement() {
+            readyToPlaceProduct = true;
+            alert("Kliknij teraz w wybrane miejsce na ekranie, aby umieścić produkt!");
+        }
+
+        function handleShelf2DClick(e) {
+            if(!isEditorActive || !readyToPlaceProduct) return;
+            let img = document.getElementById('shelf-2d-image');
+            let rect = img.getBoundingClientRect();
+            if(e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                let percentX = ((e.clientX - rect.left) / rect.width) * 100;
+                let percentY = ((e.clientY - rect.top) / rect.height) * 100;
+                let ean = document.getElementById('editor-product-select').value;
+                alejki[currentAleppo].hotspots.push({ ean, percentX, percentY });
+                updateHotspotsDOM();
+                readyToPlaceProduct = false;
+                saveState();
+                // nie wyłączamy trybu edycji – można od razu stawiać kolejny punkt
+            }
+        }
+
+        container.addEventListener('click', (e) => {
+            if(is2DMode || !isEditorActive || !readyToPlaceProduct) return;
+            let mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+            let raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+            let intersects = raycaster.intersectObject(sphereMesh);
+            if(intersects.length > 0) {
+                let p = intersects[0].point;
+                let ean = document.getElementById('editor-product-select').value;
+                alejki[currentAleppo].hotspots.push({ ean, pos: { x: p.x * 0.4, y: p.y * 0.4, z: p.z * 0.4 } });
+                updateHotspotsDOM();
+                readyToPlaceProduct = false;
+                saveState();
+            }
+        });
+
+        function removeLastHotspot() {
+            if(alejki[currentAleppo].hotspots.length > 0) {
+                alejki[currentAleppo].hotspots.pop();
+                updateHotspotsDOM();
+                saveState();
+            }
+        }
+
+        function handleCSVUpload(e) {
+            let file = e.target.files[0];
+            if(!file) return;
+            let reader = new FileReader();
+            reader.onload = (evt) => {
+                parseCSVData(evt.target.result);
+                alert("Zaktualizowano bazę CSV!");
+            };
+            reader.readAsText(file);
+        }
+
+        function openProductModal(ean) {
+            let p = productsDB[ean] || { nazwa: "Produkt spożywczy", ean: ean, cena: "9.99" };
+            selectedProductForModal = p;
+            document.getElementById('modal-prod-name').innerText = p.nazwa;
+            document.getElementById('modal-prod-ean').innerText = "EAN: " + p.ean;
+            document.getElementById('modal-prod-price').innerText = p.cena + " PLN";
+            document.getElementById('modal-overlay').style.display = 'flex';
+        }
+
+        function closeProductModal() {
+            document.getElementById('modal-overlay').style.display = 'none';
+            selectedProductForModal = null;
+        }
+
+        function addProductToCart() {
+            if(selectedProductForModal) {
+                cart.push(Object.assign({}, selectedProductForModal));
+                updateCartUI();
+                saveState();
+            }
+            closeProductModal();
+        }
+
+        function updateCartUI() {
+            let total = 0;
+            for(let i = 0; i < cart.length; i++) {
+                total += parseFloat(cart[i].cena);
+            }
+            document.getElementById('cart-count').innerText = cart.length;
+            document.getElementById('cart-total').innerText = total.toFixed(2);
+        }
+
+        function openCheckout() {
+            let list = document.getElementById('checkout-items-list');
+            list.innerHTML = cart.length === 0 ? '<p style="color:#94a3b8">Koszyk pusty.</p>' : '';
+            cart.forEach(i => {
+                let div = document.createElement('div');
+                div.style.cssText = "display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #475569;";
+                div.innerHTML = `<span>${i.nazwa}</span> <b>${i.cena} zł</b>`;
+                list.appendChild(div);
+            });
+            document.getElementById('checkout-grand-total').innerText = document.getElementById('cart-total').innerText;
+            document.getElementById('checkout-overlay').style.display = 'flex';
+        }
+
+        function closeCheckout() {
+            document.getElementById('checkout-overlay').style.display = 'none';
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(!is2DMode) {
+                lon += (targetLon - lon) * 0.1;
+                lat += (targetLat - lat) * 0.1;
+                lat = Math.max(-85, Math.min(85, lat));
+                let phi = THREE.MathUtils.degToRad(90 - lat);
+                let theta = THREE.MathUtils.degToRad(lon);
+                camera.lookAt(
+                    100 * Math.sin(phi) * Math.sin(theta),
+                    100 * Math.cos(phi),
+                    100 * Math.sin(phi) * Math.cos(theta)
+                );
+                renderer.render(scene, camera);
+            }
+
+            // Aktualizacja hotspotów max co ~60ms (nie co klatkę)
+            const now = performance.now();
+            if (now - lastHotspotUpdate > 60) {
+                updateHotspotsDOM();
+                lastHotspotUpdate = now;
+            }
+        }
+
+        // ========== START ==========
+        loadState();
+        updateCartUI();
+        switchAleppo(currentAleppo);
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            updateHotspotsDOM();
+        });
+    </script>
+</body>
+</html>
